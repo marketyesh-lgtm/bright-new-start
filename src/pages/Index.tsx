@@ -256,11 +256,16 @@ const Index = () => {
               <p className="text-xs text-muted-foreground">Forecast & Reposición Inteligente</p>
             </div>
           </div>
-          <Button onClick={handleSync} disabled={syncing} className="gap-2">
-            <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-            {syncing ? "Sincronizando…" : "Sincronizar SHEIN"}
-          </Button>
-        </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setJsonDialogOpen(true)} className="gap-2">
+              <ClipboardPaste className="h-4 w-4" />
+              Importar JSON
+            </Button>
+            <Button onClick={handleSync} disabled={syncing} className="gap-2">
+              <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+              {syncing ? "Sincronizando…" : "Sincronizar SHEIN"}
+            </Button>
+          </div>
       </header>
 
       <main className="container mx-auto space-y-6 px-4 py-6">
