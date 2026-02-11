@@ -179,7 +179,7 @@ const Index = () => {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium">Advertencias</CardTitle>
-              <TrendingDown className="h-4 w-4 text-yellow-500" />
+              <TrendingDown className="h-4 w-4 text-orange-500" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-orange-500">{warningItems.length}</div>
