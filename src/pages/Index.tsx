@@ -328,7 +328,7 @@ const Index = () => {
                           {item.daysRemaining <= 7 ? (
                             <Badge variant="destructive">Crítico</Badge>
                           ) : item.daysRemaining <= 14 ? (
-                            <Badge className="bg-yellow-500 text-white hover:bg-yellow-600">Alerta</Badge>
+                            <Badge variant="outline" className="border-orange-500 text-orange-500">Alerta</Badge>
                           ) : (
                             <Badge variant="secondary">OK</Badge>
                           )}
