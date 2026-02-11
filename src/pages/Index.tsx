@@ -46,7 +46,10 @@ const Index = () => {
   const [sales, setSales] = useState<SaleRecord[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [loading, setLoading] = useState(true);
-
+  const [jsonDialogOpen, setJsonDialogOpen] = useState(false);
+  const [jsonProducts, setJsonProducts] = useState("");
+  const [jsonOrders, setJsonOrders] = useState("");
+  const [importing, setImporting] = useState(false);
   const fetchData = async () => {
     setLoading(true);
     const [invRes, salesRes] = await Promise.all([
