@@ -266,6 +266,7 @@ const Index = () => {
               {syncing ? "Sincronizando…" : "Sincronizar SHEIN"}
             </Button>
           </div>
+        </div>
       </header>
 
       <main className="container mx-auto space-y-6 px-4 py-6">
