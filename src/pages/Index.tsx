@@ -182,7 +182,7 @@ const Index = () => {
               <TrendingDown className="h-4 w-4 text-yellow-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-yellow-500">{warningItems.length}</div>
+              <div className="text-2xl font-bold text-orange-500">{warningItems.length}</div>
             </CardContent>
           </Card>
         </div>
