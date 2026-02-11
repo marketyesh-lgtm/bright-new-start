@@ -84,6 +84,90 @@ const Index = () => {
     setSyncing(false);
   };
 
+  const handleJsonImport = async () => {
+    setImporting(true);
+    let productCount = 0;
+    let orderCount = 0;
+
+    try {
+      // Parse and import products
+      if (jsonProducts.trim()) {
+        const productsPayload = JSON.parse(jsonProducts.trim());
+        const productList = Array.isArray(productsPayload)
+          ? productsPayload
+          : productsPayload?.data?.list || productsPayload?.list || productsPayload?.data || [];
+
+        if (!Array.isArray(productList)) throw new Error("El JSON de productos no contiene un array válido.");
+
+        for (const p of productList) {
+          const sku = p.skuCode || p.sku || p.SKU || p.skucode || "";
+          const name = p.productName || p.title || p.name || p.goodsName || "Sin nombre";
+          const stock = p.stock ?? p.availableStock ?? p.quantity ?? p.inventory ?? 0;
+
+          if (!sku) continue;
+
+          const { error } = await supabase.from("inventory").upsert({
+            sku: String(sku).trim().slice(0, 200),
+            name: String(name).trim().slice(0, 500),
+            stock_current: Number(stock) || 0,
+            last_synced_at: new Date().toISOString(),
+          }, { onConflict: "sku" });
+
+          if (!error) productCount++;
+        }
+      }
+
+      // Parse and import orders
+      if (jsonOrders.trim()) {
+        const ordersPayload = JSON.parse(jsonOrders.trim());
+        const orderList = Array.isArray(ordersPayload)
+          ? ordersPayload
+          : ordersPayload?.data?.list || ordersPayload?.list || ordersPayload?.data || [];
+
+        if (!Array.isArray(orderList)) throw new Error("El JSON de órdenes no contiene un array válido.");
+
+        for (const order of orderList) {
+          const items = order.orderItems || order.items || [order];
+          for (const item of items) {
+            const sku = item.skuCode || item.sku || item.SKU || "";
+            const orderId = order.orderNo || order.orderId || order.order_id || item.orderNo || `manual-${Date.now()}`;
+            const quantity = item.quantity || item.qty || 1;
+            const saleDate = order.orderTime || order.createTime || order.sale_date || new Date().toISOString();
+
+            if (!sku) continue;
+
+            const { error } = await supabase.from("sales_history").upsert({
+              sku: String(sku).trim().slice(0, 200),
+              order_id: String(orderId).trim().slice(0, 200),
+              quantity: Number(quantity) || 1,
+              sale_date: saleDate,
+            }, { onConflict: "order_id,sku" });
+
+            if (!error) orderCount++;
+          }
+        }
+      }
+
+      toast({
+        title: "Importación exitosa",
+        description: `${productCount} productos y ${orderCount} órdenes importados.`,
+      });
+
+      setJsonProducts("");
+      setJsonOrders("");
+      setJsonDialogOpen(false);
+      await fetchData();
+    } catch (e: any) {
+      toast({
+        title: "Error al procesar JSON",
+        description: e.message || "Verifica el formato del JSON.",
+        variant: "destructive",
+      });
+    }
+    setImporting(false);
+  };
+
+
   const forecast: ForecastItem[] = useMemo(() => {
     return inventory.map((item) => {
       const itemSales = sales.filter((s) => s.sku === item.sku);
