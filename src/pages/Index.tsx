@@ -7,13 +7,16 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { RefreshCw, AlertTriangle, TrendingDown, Package, ShoppingCart, BarChart3, Activity, ArrowUpRight } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { RefreshCw, AlertTriangle, TrendingDown, Package, ShoppingCart, BarChart3, Activity, ArrowUpRight, Upload, ClipboardPaste } from "lucide-react";
 import {
   ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line, AreaChart, Area } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, AreaChart, Area } from "recharts";
 
 interface InventoryItem {
   id: string;
@@ -43,7 +46,10 @@ const Index = () => {
   const [sales, setSales] = useState<SaleRecord[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [loading, setLoading] = useState(true);
-
+  const [jsonDialogOpen, setJsonDialogOpen] = useState(false);
+  const [jsonProducts, setJsonProducts] = useState("");
+  const [jsonOrders, setJsonOrders] = useState("");
+  const [importing, setImporting] = useState(false);
   const fetchData = async () => {
     setLoading(true);
     const [invRes, salesRes] = await Promise.all([
@@ -77,6 +83,90 @@ const Index = () => {
     }
     setSyncing(false);
   };
+
+  const handleJsonImport = async () => {
+    setImporting(true);
+    let productCount = 0;
+    let orderCount = 0;
+
+    try {
+      // Parse and import products
+      if (jsonProducts.trim()) {
+        const productsPayload = JSON.parse(jsonProducts.trim());
+        const productList = Array.isArray(productsPayload)
+          ? productsPayload
+          : productsPayload?.data?.list || productsPayload?.list || productsPayload?.data || [];
+
+        if (!Array.isArray(productList)) throw new Error("El JSON de productos no contiene un array válido.");
+
+        for (const p of productList) {
+          const sku = p.skuCode || p.sku || p.SKU || p.skucode || "";
+          const name = p.productName || p.title || p.name || p.goodsName || "Sin nombre";
+          const stock = p.stock ?? p.availableStock ?? p.quantity ?? p.inventory ?? 0;
+
+          if (!sku) continue;
+
+          const { error } = await supabase.from("inventory").upsert({
+            sku: String(sku).trim().slice(0, 200),
+            name: String(name).trim().slice(0, 500),
+            stock_current: Number(stock) || 0,
+            last_synced_at: new Date().toISOString(),
+          }, { onConflict: "sku" });
+
+          if (!error) productCount++;
+        }
+      }
+
+      // Parse and import orders
+      if (jsonOrders.trim()) {
+        const ordersPayload = JSON.parse(jsonOrders.trim());
+        const orderList = Array.isArray(ordersPayload)
+          ? ordersPayload
+          : ordersPayload?.data?.list || ordersPayload?.list || ordersPayload?.data || [];
+
+        if (!Array.isArray(orderList)) throw new Error("El JSON de órdenes no contiene un array válido.");
+
+        for (const order of orderList) {
+          const items = order.orderItems || order.items || [order];
+          for (const item of items) {
+            const sku = item.skuCode || item.sku || item.SKU || "";
+            const orderId = order.orderNo || order.orderId || order.order_id || item.orderNo || `manual-${Date.now()}`;
+            const quantity = item.quantity || item.qty || 1;
+            const saleDate = order.orderTime || order.createTime || order.sale_date || new Date().toISOString();
+
+            if (!sku) continue;
+
+            const { error } = await supabase.from("sales_history").upsert({
+              sku: String(sku).trim().slice(0, 200),
+              order_id: String(orderId).trim().slice(0, 200),
+              quantity: Number(quantity) || 1,
+              sale_date: saleDate,
+            }, { onConflict: "order_id,sku" });
+
+            if (!error) orderCount++;
+          }
+        }
+      }
+
+      toast({
+        title: "Importación exitosa",
+        description: `${productCount} productos y ${orderCount} órdenes importados.`,
+      });
+
+      setJsonProducts("");
+      setJsonOrders("");
+      setJsonDialogOpen(false);
+      await fetchData();
+    } catch (e: any) {
+      toast({
+        title: "Error al procesar JSON",
+        description: e.message || "Verifica el formato del JSON.",
+        variant: "destructive",
+      });
+    }
+    setImporting(false);
+  };
+
 
   const forecast: ForecastItem[] = useMemo(() => {
     return inventory.map((item) => {
@@ -166,10 +256,16 @@ const Index = () => {
               <p className="text-xs text-muted-foreground">Forecast & Reposición Inteligente</p>
             </div>
           </div>
-          <Button onClick={handleSync} disabled={syncing} className="gap-2">
-            <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-            {syncing ? "Sincronizando…" : "Sincronizar SHEIN"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setJsonDialogOpen(true)} className="gap-2">
+              <ClipboardPaste className="h-4 w-4" />
+              Importar JSON
+            </Button>
+            <Button onClick={handleSync} disabled={syncing} className="gap-2">
+              <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+              {syncing ? "Sincronizando…" : "Sincronizar SHEIN"}
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -507,6 +603,78 @@ const Index = () => {
           </TabsContent>
         </Tabs>
       </main>
+
+      {/* JSON Import Dialog */}
+      <Dialog open={jsonDialogOpen} onOpenChange={setJsonDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Upload className="h-5 w-5" />
+              Importar datos desde JSON
+            </DialogTitle>
+            <DialogDescription>
+              Pega el JSON que obtuviste de SHEIN. Acepta el formato directo de la API o arrays simples.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="json-products" className="font-medium">
+                Productos / Inventario
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Campos esperados: <code className="rounded bg-muted px-1">skuCode</code>, <code className="rounded bg-muted px-1">productName</code>, <code className="rounded bg-muted px-1">stock</code>
+              </p>
+              <Textarea
+                id="json-products"
+                placeholder={`Ejemplo:\n[\n  {"skuCode": "SKU001", "productName": "Camiseta", "stock": 150},\n  {"skuCode": "SKU002", "productName": "Pantalón", "stock": 80}\n]`}
+                className="min-h-[140px] font-mono text-xs"
+                value={jsonProducts}
+                onChange={(e) => setJsonProducts(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="json-orders" className="font-medium">
+                Órdenes / Historial de Ventas
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Campos esperados: <code className="rounded bg-muted px-1">orderNo</code>, <code className="rounded bg-muted px-1">skuCode</code>, <code className="rounded bg-muted px-1">quantity</code>, <code className="rounded bg-muted px-1">orderTime</code>
+              </p>
+              <Textarea
+                id="json-orders"
+                placeholder={`Ejemplo:\n[\n  {"orderNo": "ORD001", "skuCode": "SKU001", "quantity": 3, "orderTime": "2026-01-15"},\n  {"orderNo": "ORD002", "skuCode": "SKU002", "quantity": 1, "orderTime": "2026-02-01"}\n]`}
+                className="min-h-[140px] font-mono text-xs"
+                value={jsonOrders}
+                onChange={(e) => setJsonOrders(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setJsonDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleJsonImport}
+              disabled={importing || (!jsonProducts.trim() && !jsonOrders.trim())}
+              className="gap-2"
+            >
+              {importing ? (
+                <>
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  Importando…
+                </>
+              ) : (
+                <>
+                  <Upload className="h-4 w-4" />
+                  Importar datos
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
