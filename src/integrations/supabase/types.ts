@@ -14,7 +14,90 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      inventory: {
+        Row: {
+          created_at: string
+          id: string
+          last_synced_at: string | null
+          name: string
+          sku: string
+          stock_current: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          last_synced_at?: string | null
+          name: string
+          sku: string
+          stock_current?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          last_synced_at?: string | null
+          name?: string
+          sku?: string
+          stock_current?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      sales_history: {
+        Row: {
+          created_at: string
+          id: string
+          order_id: string | null
+          quantity: number
+          sale_date: string
+          sku: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          order_id?: string | null
+          quantity?: number
+          sale_date?: string
+          sku: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          order_id?: string | null
+          quantity?: number
+          sale_date?: string
+          sku?: string
+        }
+        Relationships: []
+      }
+      shein_auth: {
+        Row: {
+          access_token: string | null
+          created_at: string
+          id: string
+          open_key_id: string | null
+          secret_key: string | null
+          updated_at: string
+        }
+        Insert: {
+          access_token?: string | null
+          created_at?: string
+          id?: string
+          open_key_id?: string | null
+          secret_key?: string | null
+          updated_at?: string
+        }
+        Update: {
+          access_token?: string | null
+          created_at?: string
+          id?: string
+          open_key_id?: string | null
+          secret_key?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
