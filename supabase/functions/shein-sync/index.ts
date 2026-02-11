@@ -127,6 +127,23 @@ Deno.serve(async (req) => {
     const url = new URL(req.url);
     const action = url.searchParams.get("action");
 
+    // Manual auth: store credentials directly (bypass OAuth flow)
+    if (action === "manual-auth") {
+      const { openKeyId, encryptedSecretKey } = await req.json();
+      const decryptedSecret = await aes128EcbDecrypt(encryptedSecretKey, appSecret);
+
+      await supabase.from("shein_auth").upsert({
+        open_key_id: openKeyId,
+        secret_key: decryptedSecret,
+        access_token: openKeyId, // use openKeyId as access identifier
+      }, { onConflict: "open_key_id" });
+
+      return new Response(
+        JSON.stringify({ success: true, message: "Credentials stored", decryptedKeyPreview: decryptedSecret.substring(0, 4) + "..." }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // OAuth callback: exchange tempToken for secretKey
     if (action === "callback" || url.searchParams.get("tempToken")) {
       const tempToken = url.searchParams.get("tempToken")!;
