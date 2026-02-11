@@ -66,9 +66,9 @@ const Index = () => {
         `${SUPABASE_URL}/functions/v1/shein-sync?action=sync`,
         {
           method: "POST",
-          headers: {
+        headers: {
             "Content-Type": "application/json",
-            apikey: supabase.supabaseKey,
+            apikey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV4Znd1cndpZGVwZmdvY3JqYmxlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA4MTY2MTksImV4cCI6MjA4NjM5MjYxOX0.aEt1LSTGxswrhJ464OzhnXWB73vHYtBmn8ZzMFsmmec",
           },
         }
       );
