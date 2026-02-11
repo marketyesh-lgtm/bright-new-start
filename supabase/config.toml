@@ -1,1 +1,4 @@
 project_id = "uxfwurwidepfgocrjble"
+
+[functions.shein-sync]
+verify_jwt = false
