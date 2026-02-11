@@ -603,6 +603,78 @@ const Index = () => {
           </TabsContent>
         </Tabs>
       </main>
+
+      {/* JSON Import Dialog */}
+      <Dialog open={jsonDialogOpen} onOpenChange={setJsonDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Upload className="h-5 w-5" />
+              Importar datos desde JSON
+            </DialogTitle>
+            <DialogDescription>
+              Pega el JSON que obtuviste de SHEIN. Acepta el formato directo de la API o arrays simples.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="json-products" className="font-medium">
+                Productos / Inventario
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Campos esperados: <code className="rounded bg-muted px-1">skuCode</code>, <code className="rounded bg-muted px-1">productName</code>, <code className="rounded bg-muted px-1">stock</code>
+              </p>
+              <Textarea
+                id="json-products"
+                placeholder={`Ejemplo:\n[\n  {"skuCode": "SKU001", "productName": "Camiseta", "stock": 150},\n  {"skuCode": "SKU002", "productName": "Pantalón", "stock": 80}\n]`}
+                className="min-h-[140px] font-mono text-xs"
+                value={jsonProducts}
+                onChange={(e) => setJsonProducts(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="json-orders" className="font-medium">
+                Órdenes / Historial de Ventas
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Campos esperados: <code className="rounded bg-muted px-1">orderNo</code>, <code className="rounded bg-muted px-1">skuCode</code>, <code className="rounded bg-muted px-1">quantity</code>, <code className="rounded bg-muted px-1">orderTime</code>
+              </p>
+              <Textarea
+                id="json-orders"
+                placeholder={`Ejemplo:\n[\n  {"orderNo": "ORD001", "skuCode": "SKU001", "quantity": 3, "orderTime": "2026-01-15"},\n  {"orderNo": "ORD002", "skuCode": "SKU002", "quantity": 1, "orderTime": "2026-02-01"}\n]`}
+                className="min-h-[140px] font-mono text-xs"
+                value={jsonOrders}
+                onChange={(e) => setJsonOrders(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setJsonDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleJsonImport}
+              disabled={importing || (!jsonProducts.trim() && !jsonOrders.trim())}
+              className="gap-2"
+            >
+              {importing ? (
+                <>
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  Importando…
+                </>
+              ) : (
+                <>
+                  <Upload className="h-4 w-4" />
+                  Importar datos
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
