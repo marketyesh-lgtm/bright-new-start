@@ -1,35 +1,17 @@
 import { supabase } from "@/integrations/supabase/client";
-import { callSheinApi, SHEIN_APP_ID, SHEIN_APP_SECRET, type SheinAuthCredentials } from "@/lib/shein-api";
-
-export async function getSheinCredentials(): Promise<SheinAuthCredentials | null> {
-  const { data } = await supabase
-    .from("shein_auth")
-    .select("open_key_id, secret_key")
-    .limit(1)
-    .maybeSingle();
-
-  if (!data?.open_key_id || !data?.secret_key) return null;
-  return { openKeyId: data.open_key_id, secretKey: data.secret_key };
-}
 
 export async function syncSheinData(): Promise<{ products: number; orders: number }> {
-  const creds = await getSheinCredentials();
-  if (!creds) throw new Error("No se encontraron credenciales de SHEIN. Configura la autenticación primero.");
-
+  // Call shein-proxy to fetch products
   let productCount = 0;
   let orderCount = 0;
 
-  // Sync products/inventory
   try {
-    const productsData = await callSheinApi(
-      "/open-api/product/query",
-      creds,
-      SHEIN_APP_ID,
-      SHEIN_APP_SECRET,
-      { pageNo: 1, pageSize: 100 }
-    );
+    const { data: productsData, error: pErr } = await supabase.functions.invoke("shein-proxy", {
+      body: { path: "/open-api/product/query", params: { pageNo: 1, pageSize: 100 } },
+    });
+    if (pErr) throw pErr;
 
-    if (productsData.code === "0" && productsData.data?.list) {
+    if (productsData?.code === "0" && productsData?.data?.list) {
       for (const product of productsData.data.list) {
         await supabase.from("inventory").upsert({
           sku: product.skuCode || product.sku,
@@ -41,26 +23,26 @@ export async function syncSheinData(): Promise<{ products: number; orders: numbe
       }
     }
   } catch (e) {
-    console.warn("Error syncing products (CORS may block direct calls):", e);
+    console.warn("Error syncing products:", e);
   }
 
-  // Sync orders (last 30 days)
+  // Fetch orders (last 30 days)
   try {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const ordersData = await callSheinApi(
-      "/open-api/order/query",
-      creds,
-      SHEIN_APP_ID,
-      SHEIN_APP_SECRET,
-      {
-        startTime: thirtyDaysAgo.toISOString(),
-        endTime: new Date().toISOString(),
-        pageNo: 1,
-        pageSize: 200,
-      }
-    );
+    const { data: ordersData, error: oErr } = await supabase.functions.invoke("shein-proxy", {
+      body: {
+        path: "/open-api/order/query",
+        params: {
+          startTime: thirtyDaysAgo.toISOString(),
+          endTime: new Date().toISOString(),
+          pageNo: 1,
+          pageSize: 200,
+        },
+      },
+    });
+    if (oErr) throw oErr;
 
-    if (ordersData.code === "0" && ordersData.data?.list) {
+    if (ordersData?.code === "0" && ordersData?.data?.list) {
       for (const order of ordersData.data.list) {
         const items = order.orderItems || order.items || [];
         for (const item of items) {
@@ -75,8 +57,24 @@ export async function syncSheinData(): Promise<{ products: number; orders: numbe
       }
     }
   } catch (e) {
-    console.warn("Error syncing orders (CORS may block direct calls):", e);
+    console.warn("Error syncing orders:", e);
   }
 
   return { products: productCount, orders: orderCount };
+}
+
+export async function saveSheinCredentials(openKeyId: string, secretKey: string): Promise<void> {
+  const { error } = await supabase.functions.invoke("shein-sync", {
+    body: { action: "manual-auth", openKeyId, secretKey },
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function getSheinCredentials() {
+  const { data } = await supabase
+    .from("shein_auth")
+    .select("open_key_id, secret_key")
+    .limit(1)
+    .maybeSingle();
+  return data;
 }

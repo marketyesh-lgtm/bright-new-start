@@ -6,7 +6,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-const SHEIN_BASE_URL = "https://openapi.sheincorp.cn";
+const SHEIN_BASE_URL = "https://openapi.sheincorp.com";
 
 function generateRandomKey(length = 8): string {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -123,23 +123,48 @@ Deno.serve(async (req) => {
   const appId = Deno.env.get("SHEIN_APP_ID")!;
   const appSecret = Deno.env.get("SHEIN_APP_SECRET")!;
 
+  // Route through Fixie proxy for static IP
+  const fixieUrl = Deno.env.get("FIXIE_URL") ?? "";
+  if (fixieUrl) {
+    Deno.env.set("HTTP_PROXY", fixieUrl);
+    Deno.env.set("HTTPS_PROXY", fixieUrl);
+  }
+
   try {
     const url = new URL(req.url);
-    const action = url.searchParams.get("action");
+    // Support both query param and body-based action
+    let action = url.searchParams.get("action");
+    let bodyData: Record<string, unknown> = {};
+    
+    if (req.method === "POST") {
+      try {
+        bodyData = await req.json();
+        if (bodyData.action) action = bodyData.action as string;
+      } catch (_) {
+        // No body or invalid JSON
+      }
+    }
 
-    // Manual auth: store credentials directly (bypass OAuth flow)
+    // Manual auth: store credentials as plain text
     if (action === "manual-auth") {
-      const { openKeyId, encryptedSecretKey } = await req.json();
-      const decryptedSecret = await aes128EcbDecrypt(encryptedSecretKey, appSecret);
+      const openKeyId = bodyData.openKeyId as string;
+      const secretKey = bodyData.secretKey as string;
+
+      if (!openKeyId || !secretKey) {
+        return new Response(
+          JSON.stringify({ error: "Missing openKeyId or secretKey" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
 
       await supabase.from("shein_auth").upsert({
         open_key_id: openKeyId,
-        secret_key: decryptedSecret,
-        access_token: openKeyId, // use openKeyId as access identifier
+        secret_key: secretKey,
+        access_token: openKeyId,
       }, { onConflict: "open_key_id" });
 
       return new Response(
-        JSON.stringify({ success: true, message: "Credentials stored", decryptedKeyPreview: decryptedSecret.substring(0, 4) + "..." }),
+        JSON.stringify({ success: true, message: "Credentials stored" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
