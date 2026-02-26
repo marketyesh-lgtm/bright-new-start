@@ -36,7 +36,7 @@ Deno.serve(async (req) => {
       let ordersCount = 0;
       const diagnostics: Record<string, unknown> = {};
 
-      // Sync productos via Cloudflare Worker
+      // Sync productos
       try {
         const res = await fetch(CF_WORKER_URL, {
           method: "POST",
@@ -64,7 +64,7 @@ Deno.serve(async (req) => {
         diagnostics.products_error = e.message;
       }
 
-      // Sync órdenes via Cloudflare Worker
+      // Sync órdenes
       try {
         const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
         const res = await fetch(CF_WORKER_URL, {
@@ -73,10 +73,10 @@ Deno.serve(async (req) => {
           body: JSON.stringify({
             path: "/open-api/order/order-list",
             params: {
-              startTime: thirtyDaysAgo.getTime(),
-              endTime: Date.now(),
               pageNum: 1,
               pageSize: 200,
+              createTimeStart: thirtyDaysAgo.getTime(),
+              createTimeEnd: Date.now(),
             }
           }),
         });
