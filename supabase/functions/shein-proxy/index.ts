@@ -7,20 +7,20 @@ const corsHeaders = {
 
 const SHEIN_BASE_URL = "https://openapi.sheincorp.com";
 
-function generateRandomKey(length = 5): string {
-  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  const arr = new Uint8Array(length);
-  crypto.getRandomValues(arr);
-  return Array.from(arr).map(b => chars[b % chars.length]).join("");
-}
-
 async function generateSignature(
   openKeyId: string,
   secretKey: string,
   path: string
 ): Promise<{ timestamp: string; signature: string }> {
   const timestamp = String(Date.now());
-  const randomKey = generateRandomKey();
+
+  const randomBytes = new Uint8Array(4);
+  crypto.getRandomValues(randomBytes);
+  const randomKey = Array.from(randomBytes)
+    .map(b => b.toString(36))
+    .join('')
+    .substring(0, 5);
+
   const value = `${openKeyId}&${timestamp}&${path}`;
   const key = `${secretKey}${randomKey}`;
 
@@ -32,7 +32,6 @@ async function generateSignature(
   );
   const sig = await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(value));
 
-  // Convertir a hex primero, luego base64 (igual que Google Apps Script)
   const hexSignature = Array.from(new Uint8Array(sig))
     .map(b => ('0' + (b & 0xff).toString(16)).slice(-2))
     .join('');
