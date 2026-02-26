@@ -7,56 +7,63 @@ const corsHeaders = {
 
 const SHEIN_BASE_URL = "https://openapi.sheincorp.com";
 
-function generateRandomKey(length = 8): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+function generateRandomKey(length = 5): string {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
   const arr = new Uint8Array(length);
   crypto.getRandomValues(arr);
   return Array.from(arr).map(b => chars[b % chars.length]).join("");
 }
 
-async function hmacSha256(message: string, key: string): Promise<string> {
+async function generateSignature(
+  openKeyId: string,
+  secretKey: string,
+  path: string
+): Promise<{ timestamp: string; signature: string }> {
+  const timestamp = String(Date.now());
+  const randomKey = generateRandomKey();
+  const value = `${openKeyId}&${timestamp}&${path}`;
+  const key = `${secretKey}${randomKey}`;
+
   const encoder = new TextEncoder();
   const cryptoKey = await crypto.subtle.importKey(
     "raw", encoder.encode(key),
     { name: "HMAC", hash: "SHA-256" },
     false, ["sign"]
   );
-  const sig = await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(message));
-  return btoa(String.fromCharCode(...new Uint8Array(sig)));
-}
+  const sig = await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(value));
 
-async function generateSignature(appId: string, appSecret: string, path: string, timestamp: string) {
-  const randomKey = generateRandomKey();
-  const message = `${appId}&${timestamp}&${path}`;
-  const hmacBase64 = await hmacSha256(message, appSecret + randomKey);
-  return { signature: randomKey + hmacBase64 };
+  // Convertir a hex primero, luego base64 (igual que Google Apps Script)
+  const hexSignature = Array.from(new Uint8Array(sig))
+    .map(b => ('0' + (b & 0xff).toString(16)).slice(-2))
+    .join('');
+  const base64Signature = btoa(hexSignature);
+  const finalSignature = `${randomKey}${base64Signature}`;
+
+  return { timestamp, signature: finalSignature };
 }
 
 async function callSheinApi(
   path: string,
-  appId: string,
-  appSecret: string,
-  accessToken: string | null,
+  openKeyId: string,
+  secretKey: string,
   fixieUrl: string,
   body?: Record<string, unknown>
 ) {
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-  const { signature } = await generateSignature(appId, appSecret, path, timestamp);
+  const { timestamp, signature } = await generateSignature(openKeyId, secretKey, path);
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "x-lt-appid": appId,
+    "x-lt-openKeyId": openKeyId,
     "x-lt-timestamp": timestamp,
     "x-lt-signature": signature,
+    "language": "en",
   };
-  if (accessToken) headers["x-lt-accesstoken"] = accessToken;
 
   if (fixieUrl) {
     try {
       const proxyUrlObj = new URL(fixieUrl);
       const proxyAuth = btoa(`${proxyUrlObj.username}:${proxyUrlObj.password}`);
       headers["Proxy-Authorization"] = `Basic ${proxyAuth}`;
-      headers["Proxy-Connection"] = "Keep-Alive";
     } catch (_) {}
   }
 
@@ -78,7 +85,6 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
 
-  const appId = Deno.env.get("SHEIN_APP_ID") ?? "";
   const fixieUrl = Deno.env.get("FIXIE_URL") ?? "";
 
   try {
@@ -107,27 +113,22 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Usar credenciales de shein_auth, NO de los secrets de Supabase
-      const secretKey = authData.secret_key;
       const openKeyId = authData.open_key_id;
+      const secretKey = authData.secret_key;
 
       let productsCount = 0;
       let ordersCount = 0;
       const diagnostics: Record<string, unknown> = {
         fixie_url_set: !!fixieUrl,
-        app_id_set: !!appId,
-        open_key_id_preview: openKeyId?.substring(0, 6) + "...",
+        open_key_preview: openKeyId?.substring(0, 6) + "...",
         secret_key_preview: secretKey?.substring(0, 4) + "...",
       };
 
       try {
         const productsData = await callSheinApi(
-          "/open-api/product/query",
-          appId,
-          secretKey,
-          openKeyId,
-          fixieUrl,
-          { pageNo: 1, pageSize: 100 }
+          "/open-api/openapi-business-backend/product/query",
+          openKeyId, secretKey, fixieUrl,
+          { pageNum: 1, pageSize: 50 }
         );
         diagnostics.products_response = productsData;
         if (productsData.code === "0" && productsData.data?.list) {
@@ -148,15 +149,12 @@ Deno.serve(async (req) => {
       try {
         const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
         const ordersData = await callSheinApi(
-          "/open-api/order/query",
-          appId,
-          secretKey,
-          openKeyId,
-          fixieUrl,
+          "/open-api/openapi-business-backend/order/query",
+          openKeyId, secretKey, fixieUrl,
           {
             startTime: thirtyDaysAgo.toISOString(),
             endTime: new Date().toISOString(),
-            pageNo: 1, pageSize: 200,
+            pageNum: 1, pageSize: 200,
           }
         );
         diagnostics.orders_response = ordersData;
@@ -188,10 +186,8 @@ Deno.serve(async (req) => {
     });
 
   } catch (err: any) {
-    return new Response(JSON.stringify({
-      error: err.message,
-      fixie_url_set: !!fixieUrl,
-      app_id_set: !!appId,
-    }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });
