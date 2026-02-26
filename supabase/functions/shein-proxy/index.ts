@@ -44,6 +44,7 @@ async function callSheinApi(
   body?: Record<string, unknown>
 ) {
   const { timestamp, signature } = await generateSignature(openKeyId, secretKey, path);
+
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "x-lt-openKeyId": openKeyId,
@@ -51,18 +52,26 @@ async function callSheinApi(
     "x-lt-signature": signature,
     "language": "en",
   };
-  if (fixieUrl) {
-    try {
-      const proxyUrlObj = new URL(fixieUrl);
-      const proxyAuth = btoa(`${proxyUrlObj.username}:${proxyUrlObj.password}`);
-      headers["Proxy-Authorization"] = `Basic ${proxyAuth}`;
-    } catch (_) {}
-  }
-  const res = await fetch(`${SHEIN_BASE_URL}${path}`, {
+
+  let fetchOptions: RequestInit = {
     method: "POST",
     headers,
     body: body ? JSON.stringify(body) : undefined,
-  });
+  };
+
+  // Intentar proxy con Deno.createHttpClient
+  if (fixieUrl) {
+    try {
+      const proxyUrlObj = new URL(fixieUrl);
+      const proxyBase = `${proxyUrlObj.protocol}//${proxyUrlObj.username}:${proxyUrlObj.password}@${proxyUrlObj.host}`;
+      // @ts-ignore
+      const client = await Deno.createHttpClient({ proxy: { url: proxyBase } });
+      // @ts-ignore
+      fetchOptions = { ...fetchOptions, client };
+    } catch (_) {}
+  }
+
+  const res = await fetch(`${SHEIN_BASE_URL}${path}`, fetchOptions);
   const text = await res.text();
   try { return JSON.parse(text); } catch { return { raw: text, status: res.status }; }
 }
@@ -82,14 +91,32 @@ Deno.serve(async (req) => {
     const action = body.action;
 
     if (action === "test-ip") {
-      const res = await fetch("https://api.ipify.org?format=json");
-      const data = await res.json();
+      let ip = "unknown";
+      let usedProxy = false;
+      try {
+        const proxyUrlObj = new URL(fixieUrl);
+        const proxyBase = `${proxyUrlObj.protocol}//${proxyUrlObj.username}:${proxyUrlObj.password}@${proxyUrlObj.host}`;
+        // @ts-ignore
+        const client = await Deno.createHttpClient({ proxy: { url: proxyBase } });
+        // @ts-ignore
+        const res = await fetch("https://api.ipify.org?format=json", { client });
+        const data = await res.json();
+        ip = data.ip;
+        usedProxy = true;
+      } catch (e: any) {
+        // Si falla el proxy, intenta sin proxy
+        try {
+          const res = await fetch("https://api.ipify.org?format=json");
+          const data = await res.json();
+          ip = data.ip + " (SIN PROXY - error: " + e.message + ")";
+        } catch (_) {}
+      }
       return new Response(JSON.stringify({
-        ip_saliente: data.ip,
-        es_fixie_1: data.ip === "52.5.155.132",
-        es_fixie_2: data.ip === "52.87.82.133",
+        ip_saliente: ip,
+        used_proxy: usedProxy,
+        es_fixie_1: ip.includes("52.5.155.132"),
+        es_fixie_2: ip.includes("52.87.82.133"),
         fixie_url_set: !!fixieUrl,
-        fixie_url_preview: fixieUrl.substring(0, 20) + "...",
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
