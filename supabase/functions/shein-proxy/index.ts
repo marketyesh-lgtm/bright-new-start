@@ -2,159 +2,186 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
 const SHEIN_BASE_URL = "https://openapi.sheincorp.com";
 
 function generateRandomKey(length = 8): string {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
   const arr = new Uint8Array(length);
   crypto.getRandomValues(arr);
-  for (const byte of arr) {
-    result += chars[byte % chars.length];
-  }
-  return result;
+  return Array.from(arr).map(b => chars[b % chars.length]).join("");
 }
 
 async function hmacSha256(message: string, key: string): Promise<string> {
   const encoder = new TextEncoder();
   const cryptoKey = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(key),
+    "raw", encoder.encode(key),
     { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
+    false, ["sign"]
   );
-  const signature = await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(message));
-  return btoa(String.fromCharCode(...new Uint8Array(signature)));
+  const sig = await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(message));
+  return btoa(String.fromCharCode(...new Uint8Array(sig)));
 }
 
-async function generateSignature(
-  appId: string,
-  appSecret: string,
-  path: string,
-  timestamp: string
-): Promise<{ signature: string; randomKey: string }> {
+async function generateSignature(appId: string, appSecret: string, path: string, timestamp: string) {
   const randomKey = generateRandomKey();
   const message = `${appId}&${timestamp}&${path}`;
-  const hmacKey = appSecret + randomKey;
-  const hmacBase64 = await hmacSha256(message, hmacKey);
-  const signature = randomKey + hmacBase64;
-  return { signature, randomKey };
+  const hmacBase64 = await hmacSha256(message, appSecret + randomKey);
+  return { signature: randomKey + hmacBase64 };
 }
 
-async function fetchViaProxy(
-  url: string,
-  options: RequestInit,
-  fixieUrl: string
-): Promise<Response> {
-  if (!fixieUrl) {
-    return fetch(url, options);
+async function callSheinApi(
+  path: string,
+  appId: string,
+  appSecret: string,
+  accessToken: string | null,
+  fixieUrl: string,
+  body?: Record<string, unknown>
+) {
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const { signature } = await generateSignature(appId, appSecret, path, timestamp);
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-lt-appid": appId,
+    "x-lt-timestamp": timestamp,
+    "x-lt-signature": signature,
+  };
+  if (accessToken) headers["x-lt-accesstoken"] = accessToken;
+
+  if (fixieUrl) {
+    try {
+      const proxyUrlObj = new URL(fixieUrl);
+      const proxyAuth = btoa(`${proxyUrlObj.username}:${proxyUrlObj.password}`);
+      headers["Proxy-Authorization"] = `Basic ${proxyAuth}`;
+      headers["Proxy-Connection"] = "Keep-Alive";
+    } catch (_) {}
   }
 
-  // Parse Fixie proxy URL for CONNECT-style proxy
-  const proxyUrl = new URL(fixieUrl);
-  const proxyAuth = btoa(`${proxyUrl.username}:${proxyUrl.password}`);
+  const res = await fetch(`${SHEIN_BASE_URL}${path}`, {
+    method: "POST",
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
 
-  // Use Proxy-Authorization header approach
-  const targetUrl = new URL(url);
-  const proxyHeaders = new Headers(options.headers || {});
-  proxyHeaders.set("Proxy-Authorization", `Basic ${proxyAuth}`);
-
-  // For HTTPS through HTTP proxy, we route through the proxy
-  const proxyFetchUrl = `http://${proxyUrl.host}${targetUrl.pathname}${targetUrl.search}`;
-
-  // Try direct proxy routing first
-  try {
-    return await fetch(url, {
-      ...options,
-      headers: proxyHeaders,
-    });
-  } catch (_e) {
-    // Fallback: route through proxy as HTTP
-    const httpUrl = url.replace("https://", "http://");
-    return await fetch(httpUrl, {
-      ...options,
-      headers: proxyHeaders,
-    });
-  }
+  const text = await res.text();
+  try { return JSON.parse(text); } catch { return { raw: text, status: res.status }; }
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
+
+  const appId = Deno.env.get("SHEIN_APP_ID") ?? "";
+  const appSecret = Deno.env.get("SHEIN_APP_SECRET") ?? "";
+  const fixieUrl = Deno.env.get("FIXIE_URL") ?? "";
 
   try {
-    const fixieUrl = Deno.env.get("FIXIE_URL") ?? "";
-    const appId = Deno.env.get("SHEIN_APP_ID")!;
-    const appSecret = Deno.env.get("SHEIN_APP_SECRET")!;
+    const body = await req.json();
+    const action = body.action;
 
-    // Set proxy env vars for Deno's built-in proxy support
-    if (fixieUrl) {
-      Deno.env.set("HTTP_PROXY", fixieUrl);
-      Deno.env.set("HTTPS_PROXY", fixieUrl);
+    if (action === "manual-auth") {
+      const { openKeyId, secretKey } = body;
+      await supabase.from("shein_auth").upsert({
+        open_key_id: openKeyId,
+        secret_key: secretKey,
+        access_token: openKeyId,
+      }, { onConflict: "open_key_id" });
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
-    const { path, params, method } = await req.json();
+    if (action === "sync") {
+      const { data: authData } = await supabase
+        .from("shein_auth").select("*").limit(1).maybeSingle();
 
-    if (!path) {
-      return new Response(
-        JSON.stringify({ error: "Missing 'path' in request body" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      if (!authData?.access_token) {
+        return new Response(JSON.stringify({ error: "Configura las credenciales primero en el modal." }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      let productsCount = 0;
+      let ordersCount = 0;
+      const diagnostics: Record<string, unknown> = {
+        fixie_url_set: !!fixieUrl,
+        app_id_set: !!appId,
+        app_secret_set: !!appSecret,
+      };
+
+      try {
+        const productsData = await callSheinApi(
+          "/open-api/product/query", appId, appSecret,
+          authData.access_token, fixieUrl,
+          { pageNo: 1, pageSize: 100 }
+        );
+        diagnostics.products_response = productsData;
+        if (productsData.code === "0" && productsData.data?.list) {
+          for (const p of productsData.data.list) {
+            await supabase.from("inventory").upsert({
+              sku: p.skuCode || p.sku,
+              name: p.productName || p.title || "Sin nombre",
+              stock_current: p.stock ?? p.availableStock ?? 0,
+              last_synced_at: new Date().toISOString(),
+            }, { onConflict: "sku" });
+            productsCount++;
+          }
+        }
+      } catch (e: any) {
+        diagnostics.products_error = e.message;
+      }
+
+      try {
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const ordersData = await callSheinApi(
+          "/open-api/order/query", appId, appSecret,
+          authData.access_token, fixieUrl,
+          {
+            startTime: thirtyDaysAgo.toISOString(),
+            endTime: new Date().toISOString(),
+            pageNo: 1, pageSize: 200,
+          }
+        );
+        diagnostics.orders_response = ordersData;
+        if (ordersData.code === "0" && ordersData.data?.list) {
+          for (const order of ordersData.data.list) {
+            const items = order.orderItems || order.items || [];
+            for (const item of items) {
+              await supabase.from("sales_history").upsert({
+                sku: item.skuCode || item.sku,
+                order_id: order.orderNo || order.orderId,
+                quantity: item.quantity || 1,
+                sale_date: order.orderTime || order.createTime || new Date().toISOString(),
+              }, { onConflict: "order_id,sku" });
+              ordersCount++;
+            }
+          }
+        }
+      } catch (e: any) {
+        diagnostics.orders_error = e.message;
+      }
+
+      return new Response(JSON.stringify({ success: true, productsCount, ordersCount, diagnostics }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const { signature } = await generateSignature(appId, appSecret, path, timestamp);
-
-    // Read access credentials from Supabase
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
-
-    const { data: authData } = await supabase
-      .from("shein_auth")
-      .select("open_key_id, secret_key, access_token")
-      .limit(1)
-      .maybeSingle();
-
-    const accessToken = authData?.open_key_id || Deno.env.get("SHEIN_OPEN_KEY_ID") || "";
-
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      "x-lt-appid": appId,
-      "x-lt-timestamp": timestamp,
-      "x-lt-signature": signature,
-    };
-    if (accessToken) {
-      headers["x-lt-accesstoken"] = accessToken;
-    }
-
-    const targetUrl = `${SHEIN_BASE_URL}${path}`;
-    console.log(`[shein-proxy] ${method || "POST"} ${path} via ${fixieUrl ? "Fixie proxy" : "direct"}`);
-
-    const res = await fetch(targetUrl, {
-      method: method || "POST",
-      headers,
-      body: params ? JSON.stringify(params) : undefined,
+    return new Response(JSON.stringify({ error: "Acción desconocida. Usa: manual-auth, sync" }), {
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
-    const data = await res.json();
-
-    return new Response(
-      JSON.stringify(data),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
-  } catch (err) {
-    console.error("[shein-proxy] Error:", err);
-    return new Response(
-      JSON.stringify({ error: err.message }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+  } catch (err: any) {
+    return new Response(JSON.stringify({
+      error: err.message,
+      fixie_url_set: !!fixieUrl,
+      app_id_set: !!appId,
+    }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 });
