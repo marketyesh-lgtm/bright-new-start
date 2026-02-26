@@ -13,7 +13,6 @@ async function generateSignature(
   path: string
 ): Promise<{ timestamp: string; signature: string }> {
   const timestamp = String(Date.now());
-
   const randomBytes = new Uint8Array(4);
   crypto.getRandomValues(randomBytes);
   const randomKey = Array.from(randomBytes)
@@ -34,9 +33,7 @@ async function generateSignature(
   const bytes = Array.from(new Uint8Array(sig));
   const hex = bytes.map(b => ('0' + (b & 0xff).toString(16)).slice(-2)).join('');
   const base64hex = btoa(hex);
-  const finalSignature = `${randomKey}${base64hex}`;
-
-  return { timestamp, signature: finalSignature };
+  return { timestamp, signature: `${randomKey}${base64hex}` };
 }
 
 async function callSheinApi(
@@ -47,7 +44,6 @@ async function callSheinApi(
   body?: Record<string, unknown>
 ) {
   const { timestamp, signature } = await generateSignature(openKeyId, secretKey, path);
-
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "x-lt-openKeyId": openKeyId,
@@ -55,7 +51,6 @@ async function callSheinApi(
     "x-lt-signature": signature,
     "language": "en",
   };
-
   if (fixieUrl) {
     try {
       const proxyUrlObj = new URL(fixieUrl);
@@ -63,13 +58,11 @@ async function callSheinApi(
       headers["Proxy-Authorization"] = `Basic ${proxyAuth}`;
     } catch (_) {}
   }
-
   const res = await fetch(`${SHEIN_BASE_URL}${path}`, {
     method: "POST",
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
-
   const text = await res.text();
   try { return JSON.parse(text); } catch { return { raw: text, status: res.status }; }
 }
@@ -88,6 +81,18 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const action = body.action;
 
+    if (action === "test-ip") {
+      const res = await fetch("https://api.ipify.org?format=json");
+      const data = await res.json();
+      return new Response(JSON.stringify({
+        ip_saliente: data.ip,
+        es_fixie_1: data.ip === "52.5.155.132",
+        es_fixie_2: data.ip === "52.87.82.133",
+        fixie_url_set: !!fixieUrl,
+        fixie_url_preview: fixieUrl.substring(0, 20) + "...",
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (action === "manual-auth") {
       const { openKeyId, secretKey } = body;
       await supabase.from("shein_auth").upsert({
@@ -98,39 +103,6 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ success: true }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
-    }
-
-    if (action === "debug") {
-      const { data: authData } = await supabase
-        .from("shein_auth").select("*").limit(1).maybeSingle();
-
-      const openKeyId = authData?.open_key_id ?? "";
-      const secretKey = authData?.secret_key ?? "";
-      const path = "/open-api/openapi-business-backend/product/query";
-
-      const timestamp = "1772073111000";
-      const randomKey = "abc12";
-      const value = `${openKeyId}&${timestamp}&${path}`;
-      const key = `${secretKey}${randomKey}`;
-
-      const encoder = new TextEncoder();
-      const cryptoKey = await crypto.subtle.importKey(
-        "raw", encoder.encode(key),
-        { name: "HMAC", hash: "SHA-256" },
-        false, ["sign"]
-      );
-      const sig = await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(value));
-      const bytes = Array.from(new Uint8Array(sig));
-      const hex = bytes.map(b => ('0' + (b & 0xff).toString(16)).slice(-2)).join('');
-      const base64hex = btoa(hex);
-
-      return new Response(JSON.stringify({
-        value_signed: value,
-        key_used: key.substring(0, 10) + "...",
-        hex_full: hex,
-        base64hex_full: base64hex,
-        final_signature: randomKey + base64hex,
-      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "sync") {
@@ -145,7 +117,6 @@ Deno.serve(async (req) => {
 
       const openKeyId = authData.open_key_id;
       const secretKey = authData.secret_key;
-
       let productsCount = 0;
       let ordersCount = 0;
       const diagnostics: Record<string, unknown> = {
@@ -211,7 +182,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    return new Response(JSON.stringify({ error: "Acción desconocida. Usa: manual-auth, sync, debug" }), {
+    return new Response(JSON.stringify({ error: "Acción desconocida. Usa: manual-auth, sync, test-ip" }), {
       status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
