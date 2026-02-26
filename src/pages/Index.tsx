@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { syncSheinData } from "@/lib/shein-sync";
+import { syncSheinData, saveSheinCredentials, getSheinCredentials } from "@/lib/shein-sync";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -9,8 +9,9 @@ import { toast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RefreshCw, AlertTriangle, TrendingDown, Package, ShoppingCart, BarChart3, Activity, ArrowUpRight, Upload, ClipboardPaste } from "lucide-react";
+import { RefreshCw, AlertTriangle, TrendingDown, Package, ShoppingCart, BarChart3, Activity, ArrowUpRight, Upload, ClipboardPaste, Settings, Save, Loader2 } from "lucide-react";
 import {
   ChartContainer,
   ChartTooltip,
@@ -50,6 +51,11 @@ const Index = () => {
   const [jsonProducts, setJsonProducts] = useState("");
   const [jsonOrders, setJsonOrders] = useState("");
   const [importing, setImporting] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
+  const [openKeyId, setOpenKeyId] = useState("");
+  const [secretKeyInput, setSecretKeyInput] = useState("");
+  const [hasCredentials, setHasCredentials] = useState(false);
+  const [savingCreds, setSavingCreds] = useState(false);
   const fetchData = async () => {
     setLoading(true);
     const [invRes, salesRes] = await Promise.all([
@@ -63,6 +69,7 @@ const Index = () => {
 
   useEffect(() => {
     fetchData();
+    getSheinCredentials().then((creds) => setHasCredentials(!!creds?.open_key_id));
   }, []);
 
   const handleSync = async () => {
@@ -257,6 +264,10 @@ const Index = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setConfigOpen(true)} className="gap-2">
+              <Settings className="h-4 w-4" />
+              {hasCredentials ? "Credenciales ✓" : "Configurar API"}
+            </Button>
             <Button variant="outline" onClick={() => setJsonDialogOpen(true)} className="gap-2">
               <ClipboardPaste className="h-4 w-4" />
               Importar JSON
@@ -671,6 +682,72 @@ const Index = () => {
                   Importar datos
                 </>
               )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Credentials Config Dialog */}
+      <Dialog open={configOpen} onOpenChange={setConfigOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Settings className="h-5 w-5" />
+              Configuración API SHEIN
+            </DialogTitle>
+            <DialogDescription>
+              Ingresa tus credenciales de SHEIN Open API. Se guardan de forma segura en Supabase.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="config-openkey">Open Key ID</Label>
+              <Input
+                id="config-openkey"
+                placeholder="Ej: 724BCA6670944E9EBBC605749C641F3B"
+                value={openKeyId}
+                onChange={(e) => setOpenKeyId(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="config-secret">Secret Key</Label>
+              <Input
+                id="config-secret"
+                type="password"
+                placeholder="Ej: 23D45BE916634AE4B3BC1A91E7BB76AF"
+                value={secretKeyInput}
+                onChange={(e) => setSecretKeyInput(e.target.value)}
+              />
+            </div>
+            {hasCredentials && (
+              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                ✓ Credenciales configuradas previamente
+              </p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfigOpen(false)}>Cancelar</Button>
+            <Button
+              disabled={savingCreds || !openKeyId.trim() || !secretKeyInput.trim()}
+              onClick={async () => {
+                setSavingCreds(true);
+                try {
+                  await saveSheinCredentials(openKeyId.trim(), secretKeyInput.trim());
+                  setHasCredentials(true);
+                  setConfigOpen(false);
+                  setOpenKeyId("");
+                  setSecretKeyInput("");
+                  toast({ title: "Credenciales guardadas", description: "Ya puedes sincronizar con SHEIN." });
+                } catch (e: any) {
+                  toast({ title: "Error", description: e.message, variant: "destructive" });
+                }
+                setSavingCreds(false);
+              }}
+              className="gap-2"
+            >
+              {savingCreds ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              {savingCreds ? "Guardando..." : "Guardar credenciales"}
             </Button>
           </DialogFooter>
         </DialogContent>
