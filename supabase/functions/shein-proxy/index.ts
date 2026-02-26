@@ -31,12 +31,10 @@ async function generateSignature(
     false, ["sign"]
   );
   const sig = await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(value));
-
-  const hexSignature = Array.from(new Uint8Array(sig))
-    .map(b => ('0' + (b & 0xff).toString(16)).slice(-2))
-    .join('');
-  const base64Signature = btoa(hexSignature);
-  const finalSignature = `${randomKey}${base64Signature}`;
+  const bytes = Array.from(new Uint8Array(sig));
+  const hex = bytes.map(b => ('0' + (b & 0xff).toString(16)).slice(-2)).join('');
+  const base64hex = btoa(hex);
+  const finalSignature = `${randomKey}${base64hex}`;
 
   return { timestamp, signature: finalSignature };
 }
@@ -100,6 +98,39 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ success: true }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    if (action === "debug") {
+      const { data: authData } = await supabase
+        .from("shein_auth").select("*").limit(1).maybeSingle();
+
+      const openKeyId = authData?.open_key_id ?? "";
+      const secretKey = authData?.secret_key ?? "";
+      const path = "/open-api/openapi-business-backend/product/query";
+
+      const timestamp = "1772073111000";
+      const randomKey = "abc12";
+      const value = `${openKeyId}&${timestamp}&${path}`;
+      const key = `${secretKey}${randomKey}`;
+
+      const encoder = new TextEncoder();
+      const cryptoKey = await crypto.subtle.importKey(
+        "raw", encoder.encode(key),
+        { name: "HMAC", hash: "SHA-256" },
+        false, ["sign"]
+      );
+      const sig = await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(value));
+      const bytes = Array.from(new Uint8Array(sig));
+      const hex = bytes.map(b => ('0' + (b & 0xff).toString(16)).slice(-2)).join('');
+      const base64hex = btoa(hex);
+
+      return new Response(JSON.stringify({
+        value_signed: value,
+        key_used: key.substring(0, 10) + "...",
+        hex_full: hex,
+        base64hex_full: base64hex,
+        final_signature: randomKey + base64hex,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "sync") {
@@ -180,7 +211,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    return new Response(JSON.stringify({ error: "Acción desconocida. Usa: manual-auth, sync" }), {
+    return new Response(JSON.stringify({ error: "Acción desconocida. Usa: manual-auth, sync, debug" }), {
       status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
