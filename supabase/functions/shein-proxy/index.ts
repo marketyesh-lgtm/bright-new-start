@@ -79,7 +79,6 @@ Deno.serve(async (req) => {
   );
 
   const appId = Deno.env.get("SHEIN_APP_ID") ?? "";
-  const appSecret = Deno.env.get("SHEIN_APP_SECRET") ?? "";
   const fixieUrl = Deno.env.get("FIXIE_URL") ?? "";
 
   try {
@@ -102,24 +101,32 @@ Deno.serve(async (req) => {
       const { data: authData } = await supabase
         .from("shein_auth").select("*").limit(1).maybeSingle();
 
-      if (!authData?.access_token) {
+      if (!authData?.open_key_id || !authData?.secret_key) {
         return new Response(JSON.stringify({ error: "Configura las credenciales primero en el modal." }), {
           status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
+
+      // Usar credenciales de shein_auth, NO de los secrets de Supabase
+      const secretKey = authData.secret_key;
+      const openKeyId = authData.open_key_id;
 
       let productsCount = 0;
       let ordersCount = 0;
       const diagnostics: Record<string, unknown> = {
         fixie_url_set: !!fixieUrl,
         app_id_set: !!appId,
-        app_secret_set: !!appSecret,
+        open_key_id_preview: openKeyId?.substring(0, 6) + "...",
+        secret_key_preview: secretKey?.substring(0, 4) + "...",
       };
 
       try {
         const productsData = await callSheinApi(
-          "/open-api/product/query", appId, appSecret,
-          authData.access_token, fixieUrl,
+          "/open-api/product/query",
+          appId,
+          secretKey,
+          openKeyId,
+          fixieUrl,
           { pageNo: 1, pageSize: 100 }
         );
         diagnostics.products_response = productsData;
@@ -141,8 +148,11 @@ Deno.serve(async (req) => {
       try {
         const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
         const ordersData = await callSheinApi(
-          "/open-api/order/query", appId, appSecret,
-          authData.access_token, fixieUrl,
+          "/open-api/order/query",
+          appId,
+          secretKey,
+          openKeyId,
+          fixieUrl,
           {
             startTime: thirtyDaysAgo.toISOString(),
             endTime: new Date().toISOString(),
